@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Project Documentation
+    url: https://github.com/MacGyvBot/macgyvbot-docs
+    about: 기획서, 요구사항 명세서, 발표자료, 다이어그램을 확인합니다.
+  - name: Main ROS 2 System
+    url: https://github.com/MacGyvBot/macgyvbot-assistant
+    about: ROS 2 기반 메인 시스템과 로봇팔 제어 이슈를 확인합니다.
+  - name: Perception Repository
+    url: https://github.com/MacGyvBot/macgyvbot-perception
+    about: 공구 인식, 위치 추정, 모델 학습/추론 이슈를 확인합니다.
