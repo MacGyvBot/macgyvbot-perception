@@ -4,6 +4,15 @@ MacGyvBot의 `macgyvbot-*` 레포지토리를 만들 때 사용하는 기본 템
 
 이 템플릿은 “음성 명령 기반 공구 서랍 관리 로봇팔 어시스턴트” 프로젝트의 공통 협업 파일과 기본 디렉터리 구조를 제공합니다.
 
+## Model Checkpoint
+[Roboflow Tools dataset](https://universe.roboflow.com/drone-fcvjd/tools-bynck) (5,204 images, CC BY 4.0)으로 fine-tuning한 YOLO detection 모델 가중치입니다.
+| Model | Base | Dataset | Epochs | Image size | Batch | Weights |
+|---|---|---|---|---|---|---|
+| YOLOv8m | `yolov8m.pt` (COCO pretrained) | Roboflow Tools v7 | 150 (patience 35) | 640 | 16 |[`ckeckpoint/yolo_v8/yolov8_best.pt`](https://drive.google.com/drive/folders/1RecvinWnF_LqmyD_syDmNfpkQvmM-d1H?usp=drive_link) |
+| YOLO11m | `yolo11m.pt` (COCO pretrained) | Roboflow Tools v7 | 150 (patience 35) | 640 | 16 |[`ckeckpoint/yolo_v11/yolov11_best.pt`](https://drive.google.com/drive/folders/11N1dqIcpYFgg0XZ7PRkor_hm2kVurQ2N?usp=drive_link) |
+학습에 사용한 전체 하이퍼파라미터는 각 모델 폴더의 `*_args.yaml`을 참조하세요.
+
+
 ## 🚀 사용 방법
 
 1. GitHub에서 이 레포지토리를 **Template repository**로 설정합니다.
