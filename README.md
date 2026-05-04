@@ -6,6 +6,17 @@ MacGyvBot의 perception 실험 레포지토리입니다.
 
 ## 현재 실험
 
+## Model Checkpoint
+[Roboflow Tools dataset](https://universe.roboflow.com/drone-fcvjd/tools-bynck) (5,204 images, CC BY 4.0)으로 fine-tuning한 YOLO detection 모델 가중치입니다.
+| Model | Base | Dataset | Epochs | Image size | Batch | Weights |
+|---|---|---|---|---|---|---|
+| YOLOv8m | `yolov8m.pt` (COCO pretrained) | Roboflow Tools v7 | 150 (patience 35) | 640 | 16 |[`ckeckpoint/yolo_v8/yolov8_best.pt`](https://drive.google.com/drive/folders/1RecvinWnF_LqmyD_syDmNfpkQvmM-d1H?usp=drive_link) |
+| YOLO11m | `yolo11m.pt` (COCO pretrained) | Roboflow Tools v7 | 150 (patience 35) | 640 | 16 |[`ckeckpoint/yolo_v11/yolov11_best.pt`](https://drive.google.com/drive/folders/11N1dqIcpYFgg0XZ7PRkor_hm2kVurQ2N?usp=drive_link) |
+
+학습에 사용한 전체 하이퍼파라미터는 각 모델 폴더의 `*_args.yaml`을 참조하세요.
+
+
+## 📁 기본 구조
 ```text
 hand_grasp_detection/
 ├── README.md
