@@ -1,65 +1,48 @@
-# 🧰 MacGyvBot Template
+# MacGyvBot Perception
 
-MacGyvBot의 `macgyvbot-*` 레포지토리를 만들 때 사용하는 기본 템플릿입니다.
+MacGyvBot의 perception 실험 레포지토리입니다.
 
-이 템플릿은 “음성 명령 기반 공구 서랍 관리 로봇팔 어시스턴트” 프로젝트의 공통 협업 파일과 기본 디렉터리 구조를 제공합니다.
+현재 구현된 주요 실험은 **사람이 로봇 그리퍼가 들고 있는 공구를 잡았는지 판단하는 hand-tool grasp detection 프로토타입**입니다. MacBook/일반 RGB 카메라를 기본으로 사용하고, RealSense depth 카메라가 있을 경우 depth 기반 접촉 신호를 추가로 사용할 수 있습니다.
 
-## 🚀 사용 방법
-
-1. GitHub에서 이 레포지토리를 **Template repository**로 설정합니다.
-2. 새 레포지토리를 만들 때 **Use this template**을 선택합니다.
-3. 생성된 레포의 목적에 맞게 README, 패키지 구조, 설정 파일을 수정합니다.
-
-## 📁 기본 구조
+## 현재 실험
 
 ```text
-.
-├── .github/
-│   ├── ISSUE_TEMPLATE/
-│   │   ├── bug_report.md
-│   │   ├── feature_request.md
-│   │   ├── task.md
-│   │   ├── experiment.md
-│   │   ├── safety_issue.md
-│   │   └── config.yml
-│   └── PULL_REQUEST_TEMPLATE.md
-├── CONTRIBUTING.md
+hand_grasp_detection/
 ├── README.md
-└── .gitignore
+├── requirements.txt
+├── requirements-depth.txt
+├── src/
+│   ├── main.py
+│   ├── hand_detector.py
+│   ├── tool_detector.py
+│   ├── grasp_detector.py
+│   ├── depth_camera.py
+│   └── utils.py
+└── logs/
 ```
 
-## 📦 권장 레포지토리 이름
+상세 설치 및 실행 방법은 [hand_grasp_detection/README.md](./hand_grasp_detection/README.md)를 참고하세요.
 
-- `macgyvbot-assistant`
-- `macgyvbot-perception`
-- `macgyvbot-datasets`
-- `macgyvbot-docs`
-- `macgyvbot-vla`
-- `macgyvbot-simulation`
+## 핵심 기능
 
-## 🧩 공통 개발 범위
+- YOLO 커스텀 모델 기반 공구 bbox 검출
+- MediaPipe Hands 기반 다중 손 landmark 검출
+- 중복 손 검출 병합
+- 공구 ROI와 손 landmark/bbox 접촉 점수 계산
+- 선택적 RealSense depth 접촉 신호 반영
+- 연속 프레임 기반 `human_grasped_tool` 판단
+- CSV 로그 및 스크린샷 저장
 
-- 🤖 ROS 2 기반 로봇팔 제어
-- 👁️ 공구 인식 및 위치 추정
-- 🎙️ 음성 명령 처리
-- 🧰 서랍 개폐 및 그리퍼 파지 제어
-- 🚚 사용자 손 또는 전달 트레이 방향 안전 전달
-- 🧪 데이터 수집, 라벨링, 모델 학습
-- 🧠 YOLO, GroundingDINO, SAM, OpenVLA 실험
-- 🕹️ 시뮬레이션 및 실제 로봇 테스트
-- 🚨 안전 제어, 실패 복구, 로깅
+## 기본 실행
 
-## 🖥️ 기본 실행 환경
+```bash
+cd hand_grasp_detection
+pip install -r requirements.txt
+python src/main.py
+```
 
-- OS: `Ubuntu 22.04`
-- ROS 2: `ROS2 Humble`
-- Python: `Python 3.10`
-- 카메라: `Intel® RealSense™ Depth Camera D???`
-- 로봇팔: `Doosan-Robotics-M0609`
-- 그리퍼: `OnRobot RG2`
+기본 YOLO 모델 파일은 `hand_grasp_detection/yolov11_best.pt`입니다.
 
-카메라 모델명은 실제 장비 확인 후 각 레포 README와 설정 파일에서 구체화합니다.
+## Safety Note
 
-## 🤝 기여
-
-브랜치, 커밋, PR, 이슈, 안전 규칙은 [CONTRIBUTING.md](./CONTRIBUTING.md)를 따릅니다.
+이 코드는 실제 로봇 release 신호를 직접 발생시키지 않는 실험용 프로토타입입니다. 로봇팔/그리퍼에 연결할 때는 상위 제어기에서 추가 safety gate를 둬야 합니다.
