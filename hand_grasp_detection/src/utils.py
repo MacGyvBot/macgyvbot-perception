@@ -144,6 +144,61 @@ def build_depth_grasp_info(
     }
 
 
+def build_mask_grasp_info(
+    hand_info: dict,
+    tool_mask,
+    contact_radius: int = 6,
+    min_mask_contact_landmarks: int = 2,
+) -> dict:
+    """Build mask-contact metrics between hand landmarks and a locked tool mask."""
+    import cv2
+    import numpy as np
+
+    if tool_mask is None:
+        return _empty_mask_info()
+
+    mask = tool_mask.astype(bool)
+    mask_area = int(np.count_nonzero(mask))
+    if mask_area == 0:
+        return _empty_mask_info()
+
+    kernel_size = contact_radius * 2 + 1
+    kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+    dilated_mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+
+    mask_contact_count = 0
+    for point in hand_info["landmarks"].values():
+        x, y = point
+        if 0 <= y < dilated_mask.shape[0] and 0 <= x < dilated_mask.shape[1] and dilated_mask[y, x]:
+            mask_contact_count += 1
+
+    hand_rect = rect_from_points(list(hand_info["landmarks"].values()))
+    hand_mask = np.zeros_like(mask, dtype=bool)
+    x1, y1, x2, y2 = _clip_rect(hand_rect, mask.shape[1], mask.shape[0])
+    if x2 > x1 and y2 > y1:
+        hand_mask[y1:y2, x1:x2] = True
+
+    overlap_area = int(np.count_nonzero(hand_mask & dilated_mask))
+    hand_area = int(np.count_nonzero(hand_mask))
+    hand_mask_overlap_ratio = float(overlap_area / hand_area) if hand_area > 0 else 0.0
+
+    return {
+        "mask_available": True,
+        "mask_contact_count": mask_contact_count,
+        "hand_mask_overlap_ratio": hand_mask_overlap_ratio,
+        "mask_grasp_confirmed": mask_contact_count >= min_mask_contact_landmarks,
+    }
+
+
+def _empty_mask_info() -> dict:
+    return {
+        "mask_available": False,
+        "mask_contact_count": 0,
+        "hand_mask_overlap_ratio": 0.0,
+        "mask_grasp_confirmed": False,
+    }
+
+
 def _empty_depth_info(tool_depth: Optional[float]) -> dict:
     return {
         "depth_available": tool_depth is not None,
