@@ -163,6 +163,20 @@ def draw_grasps(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
 
 
+def _print_grasps(grasps, call_idx: int, top_k: int) -> None:
+    """Print top-k grasp coordinates to stdout whenever a new result arrives."""
+    if grasps is None or len(grasps) == 0:
+        return
+    n = min(top_k, len(grasps))
+    print(f"\n[grasp #{call_idx}]  top-{n} results (camera frame, metres)")
+    print(f"  {'rank':>4}  {'score':>6}  {'width':>6}  "
+          f"{'x':>8}  {'y':>8}  {'z':>8}")
+    for i in range(n):
+        t = grasps.translations[i]
+        print(f"  {i+1:>4}  {grasps.scores[i]:>6.3f}  {grasps.widths[i]:>6.3f}  "
+              f"{t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}")
+
+
 # ── Minimal GraspGroup ─────────────────────────────────────────────────────
 
 class GraspGroup:
@@ -376,6 +390,7 @@ def run(args: argparse.Namespace) -> None:
     window = "YOLO + MobileSAM + GraspNet"
     cv2.namedWindow(window, cv2.WINDOW_NORMAL)
     fps_t0, fps_n, fps = time.time(), 0, 0.0
+    _last_grasp_n = -1  # track when worker produces a new result
 
     try:
         while True:
@@ -441,6 +456,9 @@ def run(args: argparse.Namespace) -> None:
                 draw_grasps(frame, grasps, fx, fy, cx, cy,
                             top_k=args.top_k, img_h=h, img_w=w)
                 grasp_hud = f"GraspNet {grasp_ms:.0f}ms #{n_calls}"
+                if n_calls != _last_grasp_n:
+                    _print_grasps(grasps, n_calls, args.top_k)
+                    _last_grasp_n = n_calls
             else:
                 grasp_hud = "GraspNet: OFF"
 

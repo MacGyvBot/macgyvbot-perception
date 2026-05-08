@@ -1,0 +1,18 @@
+# GraspNet remote client dependencies
+# Install: pip install -r requirements_graspnet_client.txt
+
+# WebSocket client
+websockets>=12.0
+
+# Image processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Intel RealSense SDK
+# Note: also requires the native librealsense2 library.
+# Ubuntu:
+#   sudo apt-get install -y librealsense2-dkms librealsense2-utils \
+#       librealsense2-dev librealsense2-dbg
+# Then:
+#   pip install pyrealsense2
+pyrealsense2>=2.54.0
