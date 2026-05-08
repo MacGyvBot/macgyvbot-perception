@@ -50,12 +50,27 @@ def _grasp_color(rank: int) -> tuple[int, int, int]:
     return GRASP_PALETTE[min(rank, len(GRASP_PALETTE) - 1)]
 
 
-def _project(xyz: list[float], fx: float, fy: float,
+_FINGER_DEPTH = 0.04   # m
+
+
+def _project(xyz, fx: float, fy: float,
              cx: float, cy: float) -> tuple[int, int] | None:
     z = xyz[2]
     if z <= 0.01:
         return None
     return int(fx * xyz[0] / z + cx), int(fy * xyz[1] / z + cy)
+
+
+def _print_grasps(grasps: list[dict], call_n: int) -> None:
+    if not grasps:
+        return
+    print(f"\n[client grasp #{call_n}]  {len(grasps)} grasps  (camera frame, metres)")
+    print(f"  {'#':>3}  {'score':>6}  {'width':>6}  "
+          f"{'x':>8}  {'y':>8}  {'z':>8}")
+    for i, g in enumerate(grasps):
+        t = g["translation"]
+        print(f"  {i+1:>3}  {g['score']:>6.3f}  {g['width']:>6.3f}  "
+              f"{t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}")
 
 
 def draw_results(
@@ -94,41 +109,47 @@ def draw_results(
             cv2.putText(frame, label, (x1 + 2, max(10, y1 - 2)),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
-    # Grasps projected to 2D
+    # Grasps — draw gripper shape (palm bar + two fingers + approach arrow)
     for rank, g in enumerate(grasps):
-        color = _grasp_color(rank)
-        t   = g["translation"]       # [x, y, z]
-        R   = np.array(g["rotation"])  # (3, 3)
-        wid = g["width"]
-        score = g["score"]
+        color  = _grasp_color(rank)
+        t      = g["translation"]           # [x, y, z]
+        R      = np.array(g["rotation"])    # (3, 3)  row-major
+        half_w = g["width"] / 2.0
+        score  = g["score"]
 
-        center = _project(t, fx, fy, cx, cy)
-        if center is None or not (0 <= center[0] < w and 0 <= center[1] < h):
+        # R[:,0] points AWAY from object; R[:,1] = finger-spread axis
+        tip_L  = [t[i] - R[i][1] * half_w for i in range(3)]
+        tip_R  = [t[i] + R[i][1] * half_w for i in range(3)]
+        base_L = [tip_L[i] + R[i][0] * _FINGER_DEPTH for i in range(3)]
+        base_R = [tip_R[i] + R[i][0] * _FINGER_DEPTH for i in range(3)]
+        palm_c = [(base_L[i] + base_R[i]) / 2 for i in range(3)]
+
+        p_tL = _project(tip_L,  fx, fy, cx, cy)
+        p_tR = _project(tip_R,  fx, fy, cx, cy)
+        p_bL = _project(base_L, fx, fy, cx, cy)
+        p_bR = _project(base_R, fx, fy, cx, cy)
+        p_ct = _project(t,      fx, fy, cx, cy)
+        p_pc = _project(palm_c, fx, fy, cx, cy)
+
+        if any(p is None for p in (p_tL, p_tR, p_bL, p_bR, p_ct)):
             continue
-        u, v = center
+        if not (0 <= p_ct[0] < w and 0 <= p_ct[1] < h):
+            continue
 
-        radius = max(5, int(18 / max(t[2], 0.1)))
-        cv2.circle(frame, (u, v), radius, color, 2)
-        cv2.circle(frame, (u, v), 3, color, -1)
+        cv2.line(frame, p_bL, p_bR, color, 3)   # palm bar
+        cv2.line(frame, p_bL, p_tL, color, 3)   # left  finger
+        cv2.line(frame, p_bR, p_tR, color, 3)   # right finger
 
-        # approach arrow  (-R[:,0] is approach direction in GraspNet convention)
-        approach = [-R[i][0] for i in range(3)]
-        tip = [t[i] + approach[i] * 0.05 for i in range(3)]
-        tip_2d = _project(tip, fx, fy, cx, cy)
-        if tip_2d is not None:
-            cv2.arrowedLine(frame, (u, v), tip_2d, color, 2, tipLength=0.35)
+        if p_pc:
+            cv2.arrowedLine(frame, p_pc, p_ct, color, 2, tipLength=0.3)
 
-        # finger span
-        half_w = wid / 2.0
-        lp = [t[i] - R[i][1] * half_w for i in range(3)]
-        rp = [t[i] + R[i][1] * half_w for i in range(3)]
-        l2d = _project(lp, fx, fy, cx, cy)
-        r2d = _project(rp, fx, fy, cx, cy)
-        if l2d and r2d:
-            cv2.line(frame, l2d, r2d, color, 2)
-
-        cv2.putText(frame, f"#{rank+1} {score:.2f}", (u + radius + 3, v + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
+        label = f"#{rank+1} s={score:.2f} z={t[2]:.2f}m"
+        lx = min(p_bL[0], p_bR[0])
+        ly = min(p_bL[1], p_bR[1]) - 6
+        cv2.putText(frame, label, (lx, ly),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.putText(frame, label, (lx, ly),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color,    1, cv2.LINE_AA)
 
 
 # ── Async plumbing ─────────────────────────────────────────────────────────
@@ -222,15 +243,20 @@ async def receiver_loop(ws, state: dict, stop: asyncio.Event) -> None:
             payload = json.loads(msg)
         except json.JSONDecodeError:
             continue
+        grasps = payload.get("grasps", [])
         state.update({
             "dets":     payload.get("dets",     []),
-            "grasps":   payload.get("grasps",   []),
+            "grasps":   grasps,
             "yolo_ms":  payload.get("yolo_ms",  0.0),
             "sam_ms":   payload.get("sam_ms",   0.0),
             "grasp_ms": payload.get("grasp_ms", 0.0),
             "total_ms": payload.get("total_ms", 0.0),
             "last_recv": time.time(),
         })
+        if grasps:
+            n = state.get("_grasp_call_n", 0) + 1
+            state["_grasp_call_n"] = n
+            _print_grasps(grasps, n)
 
 
 async def render_loop(

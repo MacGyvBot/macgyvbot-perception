@@ -130,37 +130,68 @@ def draw_detections(frame: np.ndarray, dets: list[dict]) -> None:
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA)
 
 
+_FINGER_DEPTH = 0.04   # m — length of each finger segment
+
+
 def draw_grasps(
     frame: np.ndarray, grasps,
     fx: float, fy: float, cx: float, cy: float,
     top_k: int = 5, img_h: int = 480, img_w: int = 640,
 ) -> None:
+    """Draw gripper shapes: palm bar + two fingers + approach arrow.
+
+    GraspNet convention:
+        R[:,0] — axis pointing AWAY from object (opposite of approach)
+        R[:,1] — finger-spread (width) axis
+        t      — grasp centre, between the two fingertips
+    """
     if grasps is None or len(grasps) == 0:
         return
     n = min(top_k, len(grasps))
-    for rank, (t, R, score, width) in enumerate(zip(
-        grasps.translations[:n], grasps.rotation_matrices[:n],
-        grasps.scores[:n], grasps.widths[:n],
-    )):
-        color = _grasp_color(rank)
-        center = project_3d_to_2d(t, fx, fy, cx, cy)
-        if center is None:
+    for rank in range(n):
+        t      = grasps.translations[rank]
+        R      = grasps.rotation_matrices[rank]
+        score  = grasps.scores[rank]
+        half_w = grasps.widths[rank] / 2.0
+        color  = _grasp_color(rank)
+
+        # 3-D key points
+        tip_L   = t - R[:, 1] * half_w                    # left  fingertip
+        tip_R   = t + R[:, 1] * half_w                    # right fingertip
+        base_L  = tip_L + R[:, 0] * _FINGER_DEPTH         # left  finger base (palm side)
+        base_R  = tip_R + R[:, 0] * _FINGER_DEPTH         # right finger base
+        palm_c  = (base_L + base_R) / 2                   # palm centre (arrow tail)
+
+        # Project all to 2-D
+        p_tL = project_3d_to_2d(tip_L,  fx, fy, cx, cy)
+        p_tR = project_3d_to_2d(tip_R,  fx, fy, cx, cy)
+        p_bL = project_3d_to_2d(base_L, fx, fy, cx, cy)
+        p_bR = project_3d_to_2d(base_R, fx, fy, cx, cy)
+        p_ct = project_3d_to_2d(t,      fx, fy, cx, cy)
+        p_pc = project_3d_to_2d(palm_c, fx, fy, cx, cy)
+
+        if any(p is None for p in (p_tL, p_tR, p_bL, p_bR, p_ct)):
             continue
-        u, v = center
-        if not (0 <= u < img_w and 0 <= v < img_h):
+        if not (0 <= p_ct[0] < img_w and 0 <= p_ct[1] < img_h):
             continue
-        radius = max(5, int(18 / max(t[2], 0.1)))
-        cv2.circle(frame, (u, v), radius, color, 2)
-        cv2.circle(frame, (u, v), 3, color, -1)
-        tip_2d = project_3d_to_2d(t + (-R[:, 0]) * 0.05, fx, fy, cx, cy)
-        if tip_2d is not None:
-            cv2.arrowedLine(frame, (u, v), tip_2d, color, 2, tipLength=0.35)
-        l2d = project_3d_to_2d(t - R[:, 1] * width / 2, fx, fy, cx, cy)
-        r2d = project_3d_to_2d(t + R[:, 1] * width / 2, fx, fy, cx, cy)
-        if l2d and r2d:
-            cv2.line(frame, l2d, r2d, color, 2)
-        cv2.putText(frame, f"#{rank+1} {score:.2f}", (u + radius + 3, v + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color, 1, cv2.LINE_AA)
+
+        # Gripper shape: palm ─ left finger ─ right finger
+        cv2.line(frame, p_bL, p_bR, color, 3)   # palm bar
+        cv2.line(frame, p_bL, p_tL, color, 3)   # left  finger
+        cv2.line(frame, p_bR, p_tR, color, 3)   # right finger
+
+        # Approach arrow: palm centre → grasp centre (toward object)
+        if p_pc is not None:
+            cv2.arrowedLine(frame, p_pc, p_ct, color, 2, tipLength=0.3)
+
+        # Label above the palm bar
+        label = f"#{rank+1} s={score:.2f} z={t[2]:.2f}m"
+        lx = min(p_bL[0], p_bR[0])
+        ly = min(p_bL[1], p_bR[1]) - 6
+        cv2.putText(frame, label, (lx, ly),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 2, cv2.LINE_AA)
+        cv2.putText(frame, label, (lx, ly),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, color,    1, cv2.LINE_AA)
 
 
 def _print_grasps(grasps, call_idx: int, top_k: int) -> None:

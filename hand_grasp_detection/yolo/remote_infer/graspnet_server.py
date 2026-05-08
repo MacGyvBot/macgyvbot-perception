@@ -106,6 +106,16 @@ def masked_depth_to_pointcloud(
     return np.stack([x, y, z], axis=1).astype(np.float32)
 
 
+def _print_grasps(grasps: list[dict], peer: str) -> None:
+    print(f"\n[server grasp | {peer}]  {len(grasps)} grasps  (camera frame, metres)")
+    print(f"  {'#':>3}  {'score':>6}  {'width':>6}  "
+          f"{'x':>8}  {'y':>8}  {'z':>8}")
+    for i, g in enumerate(grasps):
+        t = g["translation"]
+        print(f"  {i+1:>3}  {g['score']:>6.3f}  {g['width']:>6.3f}  "
+              f"{t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}")
+
+
 def mask_to_norm_polygon(
     binary_mask: np.ndarray, fw: int, fh: int,
 ) -> list[list[float]] | None:
@@ -306,6 +316,8 @@ def build_app(args: argparse.Namespace) -> FastAPI:
                 )
                 await ws.send_text(json.dumps(payload))
                 n += 1
+                if payload["grasps"]:
+                    _print_grasps(payload["grasps"], peer)
                 if n % 20 == 0:
                     print(f"[server] {peer}  n={n}  "
                           f"yolo={payload['yolo_ms']:.0f}ms  "
@@ -330,10 +342,10 @@ def parse_args() -> argparse.Namespace:
         description="YOLO + MobileSAM + GraspNet WebSocket server",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    p.add_argument("--yolo",          default="runs/detect/train/weights/best.pt")
-    p.add_argument("--sam",           default="mobile_sam.pt")
-    p.add_argument("--ckpt",          default="graspnet_baseline/logs/checkpoint-rs.tar")
-    p.add_argument("--graspnet-path", default="graspnet_baseline", dest="graspnet_path")
+    p.add_argument("--yolo",          default="/home/gunwoo/macgyvbot-perception/hand_grasp_detection/yolo/ckeckpoint/yolo_v11/yolov11_best.pt")
+    p.add_argument("--sam",           default="/home/gunwoo/macgyvbot-perception/hand_grasp_detection/yolo/mobile_sam.pt")
+    p.add_argument("--ckpt",          default="/home/gunwoo/macgyvbot-perception/hand_grasp_detection/yolo/graspnet_baseline/logs/checkpoint-rs.tar")
+    p.add_argument("--graspnet-path", default="/home/gunwoo/macgyvbot-perception/hand_grasp_detection/yolo/graspnet_baseline", dest="graspnet_path")
     p.add_argument("--device",        default="0")
     p.add_argument("--imgsz",  type=int,   default=640)
     p.add_argument("--conf",   type=float, default=0.25)
