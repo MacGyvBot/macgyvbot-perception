@@ -106,14 +106,32 @@ def masked_depth_to_pointcloud(
     return np.stack([x, y, z], axis=1).astype(np.float32)
 
 
+def _rmat_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
+    sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    if sy > 1e-6:
+        roll  = np.degrees(np.arctan2( R[2, 1], R[2, 2]))
+        pitch = np.degrees(np.arctan2(-R[2, 0], sy))
+        yaw   = np.degrees(np.arctan2( R[1, 0], R[0, 0]))
+    else:
+        roll  = np.degrees(np.arctan2(-R[1, 2], R[1, 1]))
+        pitch = np.degrees(np.arctan2(-R[2, 0], sy))
+        yaw   = 0.0
+    return roll, pitch, yaw
+
+
 def _print_grasps(grasps: list[dict], peer: str) -> None:
-    print(f"\n[server grasp | {peer}]  {len(grasps)} grasps  (camera frame, metres)")
-    print(f"  {'#':>3}  {'score':>6}  {'width':>6}  "
-          f"{'x':>8}  {'y':>8}  {'z':>8}")
+    print(f"\n[server grasp | {peer}]  {len(grasps)} grasps"
+          f"  (camera frame | position: m, angle: deg)")
+    print(f"  {'#':>3}  {'score':>6}  {'width':>6}"
+          f"  {'x':>8}  {'y':>8}  {'z':>8}"
+          f"  {'roll':>8}  {'pitch':>8}  {'yaw':>8}")
     for i, g in enumerate(grasps):
         t = g["translation"]
-        print(f"  {i+1:>3}  {g['score']:>6.3f}  {g['width']:>6.3f}  "
-              f"{t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}")
+        R = np.array(g["rotation"])
+        r, p, y = _rmat_to_rpy(R)
+        print(f"  {i+1:>3}  {g['score']:>6.3f}  {g['width']:>6.3f}"
+              f"  {t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}"
+              f"  {r:>8.2f}  {p:>8.2f}  {y:>8.2f}")
 
 
 def mask_to_norm_polygon(

@@ -194,18 +194,34 @@ def draw_grasps(
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, color,    1, cv2.LINE_AA)
 
 
+def _rmat_to_rpy(R: np.ndarray) -> tuple[float, float, float]:
+    """3×3 rotation matrix → (roll, pitch, yaw) in degrees. ZYX convention."""
+    sy = np.sqrt(R[0, 0] ** 2 + R[1, 0] ** 2)
+    if sy > 1e-6:
+        roll  = np.degrees(np.arctan2( R[2, 1], R[2, 2]))
+        pitch = np.degrees(np.arctan2(-R[2, 0], sy))
+        yaw   = np.degrees(np.arctan2( R[1, 0], R[0, 0]))
+    else:  # gimbal lock
+        roll  = np.degrees(np.arctan2(-R[1, 2], R[1, 1]))
+        pitch = np.degrees(np.arctan2(-R[2, 0], sy))
+        yaw   = 0.0
+    return roll, pitch, yaw
+
+
 def _print_grasps(grasps, call_idx: int, top_k: int) -> None:
-    """Print top-k grasp coordinates to stdout whenever a new result arrives."""
     if grasps is None or len(grasps) == 0:
         return
     n = min(top_k, len(grasps))
-    print(f"\n[grasp #{call_idx}]  top-{n} results (camera frame, metres)")
-    print(f"  {'rank':>4}  {'score':>6}  {'width':>6}  "
-          f"{'x':>8}  {'y':>8}  {'z':>8}")
+    print(f"\n[grasp #{call_idx}]  top-{n}  (camera frame | position: m, angle: deg)")
+    print(f"  {'#':>3}  {'score':>6}  {'width':>6}"
+          f"  {'x':>8}  {'y':>8}  {'z':>8}"
+          f"  {'roll':>8}  {'pitch':>8}  {'yaw':>8}")
     for i in range(n):
         t = grasps.translations[i]
-        print(f"  {i+1:>4}  {grasps.scores[i]:>6.3f}  {grasps.widths[i]:>6.3f}  "
-              f"{t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}")
+        r, p, y = _rmat_to_rpy(grasps.rotation_matrices[i])
+        print(f"  {i+1:>3}  {grasps.scores[i]:>6.3f}  {grasps.widths[i]:>6.3f}"
+              f"  {t[0]:>8.4f}  {t[1]:>8.4f}  {t[2]:>8.4f}"
+              f"  {r:>8.2f}  {p:>8.2f}  {y:>8.2f}")
 
 
 # ── Minimal GraspGroup ─────────────────────────────────────────────────────
