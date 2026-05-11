@@ -28,6 +28,8 @@ log/
 *.mp4
 *.mov
 *.avi
+*.pkl
+*.csv
 
 # Local environment
 .env
