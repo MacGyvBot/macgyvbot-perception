@@ -15,6 +15,31 @@ MacGyvBot의 perception 실험 레포지토리입니다.
 
 학습에 사용한 전체 하이퍼파라미터는 각 모델 폴더의 `*_args.yaml`을 참조하세요.
 
+### SAM (Segment Anything Model) Checkpoint
+
+YOLO로 검출된 bbox를 마스크로 정밀화하는 데 사용하는 SAM 가중치입니다.  
+용량·속도 트레이드오프에 따라 아래 세 가지 중 선택하세요.
+
+#### MobileSAM (권장 — 경량)
+| 파일명 | 크기 | 출처 | 다운로드 |
+|---|---|---|---|
+| `mobile_sam.pt` | ~39 MB | [ChaoningZhang/MobileSAM](https://github.com/ChaoningZhang/MobileSAM) | [mobile_sam.pt](https://github.com/ChaoningZhang/MobileSAM/raw/master/weights/mobile_sam.pt) |
+
+MobileSAM은 SAM과 동일한 인터페이스를 유지하면서 모델 크기를 대폭 줄인 경량 버전입니다.  
+GPU 없이도 실시간 추론이 가능하며, 실험용 프로토타입에 적합합니다.
+
+#### SAM — Meta/Facebook Research (고성능)
+| Variant | 파일명 | 크기 | 다운로드 |
+|---|---|---|---|
+| `vit_b` (기본) | `sam_vit_b_01ec64.pth` | 358 MB | [다운로드](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_b_01ec64.pth) |
+| `vit_l` | `sam_vit_l_0b3195.pth` | 1.2 GB | [다운로드](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_l_0b3195.pth) |
+| `vit_h` | `sam_vit_h_4b8939.pth` | 2.4 GB | [다운로드](https://dl.fbaipublicfiles.com/segment_anything/sam_vit_h_4b8939.pth) |
+
+- **vit_b**: 속도·정확도 균형이 좋은 기본 선택지입니다.  
+- **vit_l / vit_h**: 마스크 품질이 더 높지만 메모리와 추론 시간이 증가합니다. GPU 환경에서 사용하세요.
+
+다운로드한 가중치는 `checkpoint/sam/` 디렉토리에 저장하는 것을 권장합니다.
+
 
 ## 📁 기본 구조
 ```text
