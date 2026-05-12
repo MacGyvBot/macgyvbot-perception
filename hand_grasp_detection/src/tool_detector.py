@@ -6,9 +6,9 @@ from typing import Iterable, Optional, Tuple
 
 Rect = Tuple[int, int, int, int]
 
-DEFAULT_MODEL_PATH = "yolov11_best.pt"
+DEFAULT_MODEL_PATH = str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "yolo_v11" / "yolo_v11_merge.pt")
 DEFAULT_YOLO_DEVICE = "cuda"
-DEFAULT_TOOL_CLASSES: tuple[str, ...] = ("scissors",)
+DEFAULT_TOOL_CLASSES: tuple[str, ...] = ("drill", "hammer", "pliers", "screwdriver", "wrench")
 
 
 @dataclass(frozen=True)
@@ -25,19 +25,25 @@ class ToolDetector:
         self,
         model_path: str = DEFAULT_MODEL_PATH,
         target_classes: Iterable[str] = DEFAULT_TOOL_CLASSES,
-        confidence_threshold: float = 0.20,
+        confidence_threshold: float = 0.25,
+        iou_threshold: float = 0.45,
         image_size: int = 640,
         device: str = DEFAULT_YOLO_DEVICE,
     ) -> None:
         from ultralytics import YOLO
+        import numpy as np
 
         resolved_model_path = self._resolve_model_path(model_path)
         self.model_path = str(resolved_model_path)
         self.target_classes = {name.strip().lower() for name in target_classes if name.strip()}
         self.confidence_threshold = confidence_threshold
+        self.iou_threshold = iou_threshold
         self.image_size = image_size
         self.device = device
         self.model = YOLO(str(resolved_model_path))
+
+        dummy = np.zeros((image_size, image_size, 3), dtype=np.uint8)
+        self.model.predict(dummy, device=self.device, imgsz=self.image_size, verbose=False)
 
     def detect(self, frame) -> Optional[ToolDetection]:
         """Return highest-confidence target tool detection, or None."""
@@ -45,6 +51,7 @@ class ToolDetector:
             source=frame,
             imgsz=self.image_size,
             conf=self.confidence_threshold,
+            iou=self.iou_threshold,
             device=self.device,
             verbose=False,
         )

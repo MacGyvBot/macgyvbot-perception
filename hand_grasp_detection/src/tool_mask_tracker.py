@@ -88,7 +88,7 @@ class ToolMaskTracker:
 
             return ToolMaskState(
                 roi=self.locked_roi,
-                mask=self.locked_mask,
+                mask=None,
                 state=state,
                 missing_frames=self.missing_frames,
                 visible_area_ratio=0.0,

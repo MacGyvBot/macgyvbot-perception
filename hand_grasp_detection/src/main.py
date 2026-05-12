@@ -13,15 +13,20 @@ import cv2
 from depth_camera import RealSenseDepthCamera
 from grasp_detector import GraspDetector
 from hand_detector import HandDetector
-from sam_segmenter import SamSegmenter
+from sam_segmenter import SAM_TYPE_MOBILE, SAM_TYPE_SAM, SamSegmenter
 from tool_detector import DEFAULT_MODEL_PATH, DEFAULT_TOOL_CLASSES, DEFAULT_YOLO_DEVICE, ToolDetection, ToolDetector
-from tool_mask_tracker import ToolMaskTracker
+from tool_mask_tracker import MASK_OCCLUDED, ToolMaskTracker
 from utils import build_depth_grasp_info, build_mask_grasp_info, draw_text, point_to_rect_distance, save_screenshot
 
 CAMERA_INDEX = 0
 WINDOW_NAME = "Hand Grasp Detection"
 LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
-DEFAULT_SAM_CHECKPOINT = str(Path(__file__).resolve().parents[1] / "models" / "sam_vit_b_01ec64.pth")
+DEFAULT_SAM_CHECKPOINT = str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "mobile_sam.pt")
+DEFAULT_SAM_CHECKPOINTS = {
+    "mobile_sam": str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "mobile_sam.pt"),
+    "sam_vit_b":  str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "sam_vit_b.pth"),
+    "sam_vit_l":  str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "sam_vit_l.pth"),
+}
 
 
 def main() -> int:
@@ -158,7 +163,8 @@ def _parse_args() -> Namespace:
         default=",".join(DEFAULT_TOOL_CLASSES),
         help="Comma-separated YOLO class names to use as tools. YOLO mode requires at least one class.",
     )
-    parser.add_argument("--yolo-conf", type=float, default=0.20, help="YOLO confidence threshold.")
+    parser.add_argument("--yolo-conf", type=float, default=0.25, help="YOLO confidence threshold.")
+    parser.add_argument("--yolo-iou", type=float, default=0.45, help="YOLO NMS IOU threshold.")
     parser.add_argument("--yolo-imgsz", type=int, default=640, help="YOLO inference image size.")
     parser.add_argument("--depth-source", choices=("none", "realsense"), default="none", help="Optional depth camera source.")
     parser.add_argument("--depth-diff-threshold-mm", type=float, default=50.0, help="Max hand-tool depth difference for depth contact.")
@@ -166,9 +172,24 @@ def _parse_args() -> Namespace:
     parser.add_argument("--realsense-width", type=int, default=640, help="RealSense color/depth stream width.")
     parser.add_argument("--realsense-height", type=int, default=480, help="RealSense color/depth stream height.")
     parser.add_argument("--realsense-fps", type=int, default=30, help="RealSense stream FPS.")
-    parser.add_argument("--sam-enabled", action="store_true", help="Use SAM bbox prompts to initialize locked tool masks.")
-    parser.add_argument("--sam-checkpoint", default=DEFAULT_SAM_CHECKPOINT, help="SAM checkpoint path.")
-    parser.add_argument("--sam-model-type", default="vit_b", help="SAM model type: vit_b, vit_l, or vit_h.")
+    parser.add_argument("--no-sam", dest="sam_enabled", action="store_false", help="Disable SAM segmentation.")
+    parser.set_defaults(sam_enabled=True)
+    parser.add_argument(
+        "--sam-type",
+        choices=(SAM_TYPE_MOBILE, SAM_TYPE_SAM),
+        default=SAM_TYPE_MOBILE,
+        help="SAM backend: 'mobile_sam' (vit_t, fast) or 'sam' (vit_b/vit_l/vit_h, accurate).",
+    )
+    parser.add_argument(
+        "--sam-model-type",
+        default="vit_t",
+        help="Model type: 'vit_t' for mobile_sam; 'vit_b'/'vit_l'/'vit_h' for sam.",
+    )
+    parser.add_argument(
+        "--sam-checkpoint",
+        default=DEFAULT_SAM_CHECKPOINT,
+        help=f"Checkpoint path. Defaults per --sam-type: {DEFAULT_SAM_CHECKPOINTS}",
+    )
     parser.add_argument("--sam-device", default="cuda", help="SAM device, for example cpu, cuda, or mps.")
     parser.add_argument("--mask-contact-radius", type=int, default=6, help="Pixel radius for landmark-to-mask contact.")
     parser.add_argument("--mask-min-contact-landmarks", type=int, default=2, help="Minimum landmarks touching locked mask.")
@@ -258,6 +279,7 @@ def _create_tool_detector(args: Namespace) -> Optional[ToolDetector]:
             model_path=args.yolo_model,
             target_classes=target_classes,
             confidence_threshold=args.yolo_conf,
+            iou_threshold=args.yolo_iou,
             image_size=args.yolo_imgsz,
             device=args.yolo_device,
         )
@@ -283,17 +305,27 @@ def _create_sam_segmenter(args: Namespace) -> Optional[SamSegmenter]:
     if not args.sam_enabled:
         return None
 
+    # Auto-fill checkpoint/model-type when user picks --sam-type without explicit --sam-checkpoint
+    checkpoint = args.sam_checkpoint
+    model_type = args.sam_model_type
+    if args.sam_type == SAM_TYPE_SAM and checkpoint == DEFAULT_SAM_CHECKPOINT:
+        if model_type == "vit_t":
+            model_type = "vit_b"
+        checkpoint = DEFAULT_SAM_CHECKPOINTS.get(f"sam_{model_type}", checkpoint)
+        print(f"INFO: auto-selected SAM checkpoint: {checkpoint} (model_type={model_type})")
+
     try:
         segmenter = SamSegmenter(
-            checkpoint_path=args.sam_checkpoint,
-            model_type=args.sam_model_type,
+            checkpoint_path=checkpoint,
+            model_type=model_type,
             device=args.sam_device,
+            sam_type=args.sam_type,
         )
     except Exception as exc:
         print(f"WARNING: Failed to initialize SAM segmenter: {exc}")
         return None
 
-    print(f"INFO: SAM enabled. model_type={args.sam_model_type}, device={args.sam_device}")
+    print(f"INFO: SAM enabled. sam_type={args.sam_type}, model_type={model_type}, device={args.sam_device}")
     return segmenter
 
 
@@ -448,7 +480,7 @@ def _draw_overlay(
         overlay[mask_state.mask] = (0, 160, 255)
         cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
 
-    if tool_roi is not None:
+    if tool_roi is not None and mask_state.state != MASK_OCCLUDED:
         x1, y1, x2, y2 = tool_roi
         cv2.rectangle(frame, (x1, y1), (x2, y2), roi_color, 2)
         if tool_detection is not None:

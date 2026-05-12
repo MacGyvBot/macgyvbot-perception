@@ -28,7 +28,16 @@ log/
 *.mp4
 *.mov
 *.avi
+*.jpg
+*.txt
+*.png
+*.log
 
+# YOLO training / dataset artifacts (not part of core src)
+hand_grasp_detection/yolo/
+hand_grasp_detection/ckeckpoint/
+GraspGen/
+macgyvbot/
 # Local environment
 .env
 .env.*

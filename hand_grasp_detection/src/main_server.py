@@ -40,12 +40,17 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from depth_camera import RealSenseDepthCamera
 from grasp_detector import GraspDetector
 from hand_detector import HandDetector
-from sam_segmenter import SamSegmenter
+from sam_segmenter import SAM_TYPE_MOBILE, SAM_TYPE_SAM, SamSegmenter
 from tool_detector import DEFAULT_MODEL_PATH, DEFAULT_TOOL_CLASSES, DEFAULT_YOLO_DEVICE, ToolDetection, ToolDetector
-from tool_mask_tracker import ToolMaskTracker
+from tool_mask_tracker import MASK_OCCLUDED, ToolMaskTracker
 from utils import build_depth_grasp_info, build_mask_grasp_info, point_to_rect_distance
 
-DEFAULT_SAM_CHECKPOINT = str(Path(__file__).resolve().parents[1] / "models" / "sam_vit_b_01ec64.pth")
+DEFAULT_SAM_CHECKPOINT = str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "mobile_sam.pt")
+DEFAULT_SAM_CHECKPOINTS = {
+    "mobile_sam": str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "mobile_sam.pt"),
+    "sam_vit_b":  str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "sam_vit_b.pth"),
+    "sam_vit_l":  str(Path(__file__).resolve().parents[1] / "ckeckpoint" / "sam_vit_l.pth"),
+}
 LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 
 
@@ -140,6 +145,14 @@ def _write_csv_row(writer, result, tool_detection, tool_source, mask_state, acti
 def build_app(args: argparse.Namespace) -> FastAPI:
     app = FastAPI(title="grasp-detection-server")
 
+    # Auto-fill SAM checkpoint/model-type when user picks --sam-type without explicit --sam-checkpoint
+    if args.sam_type == SAM_TYPE_SAM and args.sam_checkpoint == DEFAULT_SAM_CHECKPOINT:
+        # User switched to 'sam' but didn't override checkpoint — pick vit_b by default
+        if args.sam_model_type == "vit_t":
+            args.sam_model_type = "vit_b"
+        args.sam_checkpoint = DEFAULT_SAM_CHECKPOINTS.get(f"sam_{args.sam_model_type}", args.sam_checkpoint)
+        print(f"[server] auto-selected checkpoint: {args.sam_checkpoint} (model_type={args.sam_model_type})")
+
     # Shared stateless components (loaded once)
     tool_detector: Optional[ToolDetector] = None
     if args.detector_source == "yolo":
@@ -152,6 +165,7 @@ def build_app(args: argparse.Namespace) -> FastAPI:
                 model_path=args.yolo_model,
                 target_classes=target_classes,
                 confidence_threshold=args.yolo_conf,
+                iou_threshold=args.yolo_iou,
                 image_size=args.yolo_imgsz,
                 device=args.yolo_device,
             )
@@ -168,8 +182,9 @@ def build_app(args: argparse.Namespace) -> FastAPI:
                 checkpoint_path=args.sam_checkpoint,
                 model_type=args.sam_model_type,
                 device=args.sam_device,
+                sam_type=args.sam_type,
             )
-            print(f"[server] SAM ready. model_type={args.sam_model_type} device={args.sam_device}")
+            print(f"[server] SAM ready. sam_type={args.sam_type} model_type={args.sam_model_type} device={args.sam_device}")
         except Exception as exc:
             print(f"[server] WARNING: SAM init failed: {exc}")
 
@@ -214,6 +229,72 @@ def build_app(args: argparse.Namespace) -> FastAPI:
         manual_roi_pending = False
         n = 0
         csv_file, csv_writer = _open_csv_logger()
+        loop = asyncio.get_event_loop()
+
+        def _sync_infer(frame: np.ndarray, depth_mm, _manual_roi, _manual_roi_pending: bool):
+            """Run all heavy inference synchronously (called via run_in_executor)."""
+            # Tool detection
+            tool_detection: Optional[ToolDetection] = None
+            if args.detector_source == "yolo" and tool_detector is not None:
+                tool_detection = tool_detector.detect(frame)
+            elif args.detector_source == "manual" and _manual_roi is not None and _manual_roi_pending:
+                tool_detection = ToolDetection(roi=_manual_roi, label="manual_roi", confidence=1.0)
+
+            # SAM — set_image once per frame, predict_box per bbox (yolo_mobilesam_server.py approach)
+            detected_mask = None
+            if sam_segmenter is not None and tool_detection is not None:
+                try:
+                    sam_segmenter.set_image(frame)
+                    detected_mask = sam_segmenter.predict_box(tool_detection.roi)
+                except Exception as exc:
+                    print(f"[server] SAM warning: {exc}")
+
+            # Mask tracker
+            mask_state = tool_mask_tracker.update(
+                detected_roi=tool_detection.roi if tool_detection else None,
+                detected_mask=detected_mask,
+                frame_shape=frame.shape[:2],
+            )
+            tool_roi = mask_state.roi
+            tool_source = mask_state.source
+
+            # Hand detection
+            hand_infos = hand_detector.detect_all(frame)
+
+            # Active hand (closest to tool)
+            active_hand = None
+            if hand_infos and tool_roi is not None:
+                active_hand = min(
+                    hand_infos,
+                    key=lambda h: point_to_rect_distance(h["palm_center"], tool_roi),
+                )
+            hand_for_state = active_hand if active_hand is not None else (hand_infos[0] if hand_infos else None)
+
+            # Depth grasp info
+            depth_info = None
+            if depth_mm is not None and hand_for_state is not None and tool_roi is not None:
+                depth_info = build_depth_grasp_info(
+                    hand_info=hand_for_state,
+                    tool_roi=tool_roi,
+                    depth_mm=depth_mm,
+                    depth_diff_threshold_mm=args.depth_diff_threshold_mm,
+                    min_depth_contact_landmarks=args.depth_min_contact_landmarks,
+                )
+
+            # Mask grasp info
+            mask_info = None
+            if hand_for_state is not None and mask_state.mask is not None:
+                mask_info = build_mask_grasp_info(
+                    hand_info=hand_for_state,
+                    tool_mask=mask_state.mask,
+                    contact_radius=args.mask_contact_radius,
+                    min_mask_contact_landmarks=args.mask_min_contact_landmarks,
+                )
+
+            # Grasp state
+            result = grasp_detector.update(hand_for_state, tool_roi, depth_info, mask_info)
+
+            return result, hand_infos, active_hand, mask_state, tool_detection, tool_source
 
         try:
             while True:
@@ -239,81 +320,28 @@ def build_app(args: argparse.Namespace) -> FastAPI:
                         if depth_frame is not None:
                             depth_mm = depth_frame.depth_mm
 
-                    # Tool detection
-                    tool_detection: Optional[ToolDetection] = None
-                    if args.detector_source == "yolo" and tool_detector is not None:
-                        tool_detection = tool_detector.detect(frame)
-                    elif args.detector_source == "manual" and manual_roi is not None and manual_roi_pending:
-                        tool_detection = ToolDetection(roi=manual_roi, label="manual_roi", confidence=1.0)
-
-                    # SAM segmentation
-                    detected_mask = None
-                    if sam_segmenter is not None and tool_detection is not None:
-                        try:
-                            detected_mask = sam_segmenter.segment(frame, tool_detection.roi)
-                        except Exception as exc:
-                            print(f"[server] SAM warning: {exc}")
+                    # Run inference in thread pool (releases event loop during GPU work)
+                    (result, hand_infos, active_hand, mask_state, tool_detection, tool_source) = \
+                        await loop.run_in_executor(
+                            None, _sync_infer, frame, depth_mm, manual_roi, manual_roi_pending
+                        )
 
                     if args.detector_source == "manual" and manual_roi_pending:
                         manual_roi_pending = False
 
-                    # Mask tracker
-                    mask_state = tool_mask_tracker.update(
-                        detected_roi=tool_detection.roi if tool_detection else None,
-                        detected_mask=detected_mask,
-                        frame_shape=frame.shape[:2],
-                    )
-                    tool_roi = mask_state.roi
-                    tool_source = mask_state.source
-
-                    # Hand detection
-                    hand_infos = hand_detector.detect_all(frame)
-
-                    # Active hand
-                    active_hand = None
-                    if hand_infos and tool_roi is not None:
-                        active_hand = min(
-                            hand_infos,
-                            key=lambda h: point_to_rect_distance(h["palm_center"], tool_roi),
-                        )
-                    hand_for_state = active_hand if active_hand is not None else (hand_infos[0] if hand_infos else None)
-
-                    # Depth grasp info
-                    depth_info = None
-                    if depth_mm is not None and hand_for_state is not None and tool_roi is not None:
-                        depth_info = build_depth_grasp_info(
-                            hand_info=hand_for_state,
-                            tool_roi=tool_roi,
-                            depth_mm=depth_mm,
-                            depth_diff_threshold_mm=args.depth_diff_threshold_mm,
-                            min_depth_contact_landmarks=args.depth_min_contact_landmarks,
-                        )
-
-                    # Mask grasp info
-                    mask_info = None
-                    if hand_for_state is not None and mask_state.mask is not None:
-                        mask_info = build_mask_grasp_info(
-                            hand_info=hand_for_state,
-                            tool_mask=mask_state.mask,
-                            contact_radius=args.mask_contact_radius,
-                            min_mask_contact_landmarks=args.mask_min_contact_landmarks,
-                        )
-
-                    # Grasp state
-                    result = grasp_detector.update(hand_for_state, tool_roi, depth_info, mask_info)
-
                     _write_csv_row(csv_writer, result, tool_detection, tool_source, mask_state, active_hand)
 
+                    is_occluded = mask_state.state == MASK_OCCLUDED
                     payload = {
                         "result": result,
                         "hand_infos": _serialize_hand_infos(hand_infos),
                         "active_hand_index": active_hand["hand_index"] if active_hand else None,
-                        "tool_roi": list(tool_roi) if tool_roi else None,
-                        "tool_detection": {
+                        "tool_roi": None if is_occluded else (list(mask_state.roi) if mask_state.roi else None),
+                        "tool_detection": None if is_occluded else ({
                             "label": tool_detection.label,
                             "confidence": tool_detection.confidence,
                             "roi": list(tool_detection.roi),
-                        } if tool_detection else None,
+                        } if tool_detection else None),
                         "tool_source": tool_source,
                         "mask_state": {
                             "state": mask_state.state,
@@ -379,11 +407,27 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--yolo-model", default=DEFAULT_MODEL_PATH)
     p.add_argument("--yolo-device", default=DEFAULT_YOLO_DEVICE)
     p.add_argument("--tool-classes", default=",".join(DEFAULT_TOOL_CLASSES))
-    p.add_argument("--yolo-conf", type=float, default=0.20)
+    p.add_argument("--yolo-conf", type=float, default=0.25)
+    p.add_argument("--yolo-iou", type=float, default=0.45)
     p.add_argument("--yolo-imgsz", type=int, default=640)
-    p.add_argument("--sam-enabled", action="store_true")
-    p.add_argument("--sam-checkpoint", default=DEFAULT_SAM_CHECKPOINT)
-    p.add_argument("--sam-model-type", default="vit_b")
+    p.add_argument("--no-sam", dest="sam_enabled", action="store_false", help="Disable SAM segmentation.")
+    p.set_defaults(sam_enabled=True)
+    p.add_argument(
+        "--sam-type",
+        choices=(SAM_TYPE_MOBILE, SAM_TYPE_SAM),
+        default=SAM_TYPE_MOBILE,
+        help="SAM backend: 'mobile_sam' (vit_t, fast) or 'sam' (vit_b/vit_l/vit_h, accurate).",
+    )
+    p.add_argument(
+        "--sam-model-type",
+        default="vit_t",
+        help="Model type: 'vit_t' for mobile_sam; 'vit_b'/'vit_l'/'vit_h' for sam.",
+    )
+    p.add_argument(
+        "--sam-checkpoint",
+        default=DEFAULT_SAM_CHECKPOINT,
+        help=f"Checkpoint path. Defaults per --sam-type: {DEFAULT_SAM_CHECKPOINTS}",
+    )
     p.add_argument("--sam-device", default="cuda")
     p.add_argument("--mask-contact-radius", type=int, default=6)
     p.add_argument("--mask-min-contact-landmarks", type=int, default=2)

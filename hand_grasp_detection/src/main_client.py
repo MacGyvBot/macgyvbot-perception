@@ -390,7 +390,7 @@ async def run(args: argparse.Namespace) -> None:
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Local camera client for remote grasp detection")
-    p.add_argument("--url", default="ws://220.149.82.132:8766/infer", help="WebSocket URL, e.g. ws://server-host:8765/infer")
+    p.add_argument("--url", default="ws://220.149.82.132:8765/infer", help="WebSocket URL, e.g. ws://server-host:8765/infer")
     p.add_argument("--cam", type=int, default=0, help="OpenCV camera index")
     p.add_argument("--width", type=int, default=640)
     p.add_argument("--height", type=int, default=480)
