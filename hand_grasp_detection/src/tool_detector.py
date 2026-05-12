@@ -7,7 +7,8 @@ from typing import Iterable, Optional, Tuple
 Rect = Tuple[int, int, int, int]
 
 DEFAULT_MODEL_PATH = "yolov11_best.pt"
-DEFAULT_TOOL_CLASSES = ("drill", "hammer", "pliers", "screwdriver", "wrench")
+DEFAULT_YOLO_DEVICE = "cuda"
+DEFAULT_TOOL_CLASSES: tuple[str, ...] = ("scissors",)
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,7 @@ class ToolDetector:
         target_classes: Iterable[str] = DEFAULT_TOOL_CLASSES,
         confidence_threshold: float = 0.20,
         image_size: int = 640,
+        device: str = DEFAULT_YOLO_DEVICE,
     ) -> None:
         from ultralytics import YOLO
 
@@ -34,6 +36,7 @@ class ToolDetector:
         self.target_classes = {name.strip().lower() for name in target_classes if name.strip()}
         self.confidence_threshold = confidence_threshold
         self.image_size = image_size
+        self.device = device
         self.model = YOLO(str(resolved_model_path))
 
     def detect(self, frame) -> Optional[ToolDetection]:
@@ -42,6 +45,7 @@ class ToolDetector:
             source=frame,
             imgsz=self.image_size,
             conf=self.confidence_threshold,
+            device=self.device,
             verbose=False,
         )
         if not results:
@@ -60,7 +64,7 @@ class ToolDetector:
             class_id = int(box.cls[0])
             label = str(names.get(class_id, class_id)).lower()
 
-            if self.target_classes and label not in self.target_classes:
+            if label not in self.target_classes:
                 continue
 
             if confidence <= best_confidence:
@@ -91,10 +95,10 @@ class ToolDetector:
         if project_path.exists():
             return project_path
 
-        if model_path == "yolo11_best.pt":
+        if model_path in {"best.pt", "yolo11_best.pt"}:
             corrected_path = project_root / DEFAULT_MODEL_PATH
             if corrected_path.exists():
-                print(f"WARNING: yolo11_best.pt not found. Using {DEFAULT_MODEL_PATH}.")
+                print(f"WARNING: {model_path} not found. Using {DEFAULT_MODEL_PATH}.")
                 return corrected_path
 
         return model_path

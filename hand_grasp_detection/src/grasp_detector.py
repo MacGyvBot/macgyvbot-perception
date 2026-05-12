@@ -21,6 +21,7 @@ MIN_CONTACT_LANDMARKS = 2
 HAND_TOOL_OVERLAP_THRESHOLD = 0.08
 GRASP_SCORE_THRESHOLD = 3
 DEPTH_GRASP_SCORE_BONUS = 2
+MASK_GRASP_SCORE_BONUS = 2
 
 Point = Tuple[int, int]
 Rect = Tuple[int, int, int, int]
@@ -44,7 +45,13 @@ class GraspDetector:
         self.human_grasped_tool = False
         self.state = "NO_HAND"
 
-    def update(self, hand_info: Optional[dict], tool_roi: Optional[Rect], depth_info: Optional[dict] = None) -> dict:
+    def update(
+        self,
+        hand_info: Optional[dict],
+        tool_roi: Optional[Rect],
+        depth_info: Optional[dict] = None,
+        mask_info: Optional[dict] = None,
+    ) -> dict:
         """Update grasp state using hand landmarks and tool ROI."""
         if hand_info is None:
             self.reset()
@@ -90,6 +97,7 @@ class GraspDetector:
             min_landmark_to_tool_distance=min_landmark_to_tool_distance,
             hand_tool_overlap_ratio=hand_tool_overlap_ratio,
             depth_info=depth_info,
+            mask_info=mask_info,
         )
 
         # Use multiple contact signals instead of relying only on thumb-index pinch.
@@ -113,6 +121,7 @@ class GraspDetector:
             hand_tool_overlap_ratio=hand_tool_overlap_ratio,
             grasp_score=grasp_score,
             depth_info=depth_info,
+            mask_info=mask_info,
         )
 
     def reset(self) -> None:
@@ -129,8 +138,10 @@ class GraspDetector:
         hand_tool_overlap_ratio: float = 0.0,
         grasp_score: int = 0,
         depth_info: Optional[dict] = None,
+        mask_info: Optional[dict] = None,
     ) -> dict:
         depth_info = depth_info or {}
+        mask_info = mask_info or {}
         return {
             "state": self.state,
             "grasp_counter": self.grasp_counter,
@@ -145,6 +156,10 @@ class GraspDetector:
             "min_hand_tool_depth_diff_mm": depth_info.get("min_hand_tool_depth_diff_mm"),
             "depth_contact_count": depth_info.get("depth_contact_count", 0),
             "depth_grasp_confirmed": depth_info.get("depth_grasp_confirmed", False),
+            "mask_available": mask_info.get("mask_available", False),
+            "mask_contact_count": mask_info.get("mask_contact_count", 0),
+            "hand_mask_overlap_ratio": mask_info.get("hand_mask_overlap_ratio", 0.0),
+            "mask_grasp_confirmed": mask_info.get("mask_grasp_confirmed", False),
             "human_grasped_tool": self.human_grasped_tool,
         }
 
@@ -176,6 +191,7 @@ class GraspDetector:
         min_landmark_to_tool_distance: float,
         hand_tool_overlap_ratio: float,
         depth_info: Optional[dict],
+        mask_info: Optional[dict],
     ) -> int:
         score = 0
 
@@ -195,5 +211,8 @@ class GraspDetector:
 
         if depth_info and depth_info.get("depth_grasp_confirmed", False):
             score += DEPTH_GRASP_SCORE_BONUS
+
+        if mask_info and mask_info.get("mask_grasp_confirmed", False):
+            score += MASK_GRASP_SCORE_BONUS
 
         return score
